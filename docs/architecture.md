@@ -70,7 +70,7 @@ SQLite 使用 WAL、外键和 5 秒 busy timeout。主要实体包括：
 
 `jd --version` 与 `jd version` 输出相同的 `jd <version>`。源码构建默认版本为 `dev`，Release 由 GoReleaser 通过链接参数注入去除 `v` 前缀的语义化版本。
 
-`--` 只终止选项解析。shell 包装层仅在分隔符之前识别帮助和管理参数，因此 `jd -- --help` 可以查询并跳转到名为 `--help` 的目录。
+`--` 只终止选项解析。shell 包装层仅在分隔符之前识别帮助和管理参数，因此 POSIX shell 使用 `jd -- --help`、PowerShell 使用 `jd '--' --help`，均可查询并跳转到名为 `--help` 的目录。
 
 ## 发布边界
 

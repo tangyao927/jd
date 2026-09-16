@@ -33,6 +33,20 @@ function Write-Utf8NoBom([string]$Path, [string]$Text) {
     [IO.File]::WriteAllText($Path, $Text, (New-Object Text.UTF8Encoding($false)))
 }
 
+function Get-Sha256([string]$Path) {
+    $Stream = $null
+    $Hasher = $null
+    try {
+        $Stream = [IO.File]::OpenRead($Path)
+        $Hasher = [Security.Cryptography.SHA256]::Create()
+        $Hash = $Hasher.ComputeHash($Stream)
+        return ([BitConverter]::ToString($Hash)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        if ($Hasher) { $Hasher.Dispose() }
+        if ($Stream) { $Stream.Dispose() }
+    }
+}
+
 $EscapedDestination = $Destination.Replace("'", "''")
 $Block = @"
 $StartMarker
@@ -110,7 +124,7 @@ try {
             if (-not $ChecksumLine) { throw "Checksum missing for $Asset" }
             [void]($ChecksumLine -match $Pattern)
             $Expected = $Matches[1].ToLowerInvariant()
-            $Actual = (Get-FileHash -Algorithm SHA256 $ArchivePath).Hash.ToLowerInvariant()
+            $Actual = Get-Sha256 $ArchivePath
             if ($Actual -ne $Expected) { throw "Checksum mismatch for $Asset" }
             Expand-Archive -Path $ArchivePath -DestinationPath $TemporaryDirectory -Force
             $Binary = Join-Path $TemporaryDirectory 'jd.exe'

@@ -312,6 +312,8 @@ func TestPowerShellInstallerRejectsChecksumMismatch(t *testing.T) {
 	)
 	if output, err := command.CombinedOutput(); err == nil {
 		t.Fatalf("PowerShell checksum mismatch succeeded:\n%s", output)
+	} else if !strings.Contains(string(output), "Checksum mismatch") {
+		t.Fatalf("PowerShell installer failed for the wrong reason: %v\n%s", err, output)
 	}
 	installed, err := os.ReadFile(destination)
 	if err != nil {

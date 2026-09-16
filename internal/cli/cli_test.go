@@ -206,7 +206,7 @@ func TestRootAddScansDirectoriesForQueries(t *testing.T) {
 		t.Fatalf("root add code=%d", code)
 	}
 	stdout.Reset()
-	if code := Execute(context.Background(), []string{"api"}, runtime); code != ExitOK {
+	if code := Execute(context.Background(), []string{"--first", "api"}, runtime); code != ExitOK {
 		t.Fatalf("resolve scanned directory code=%d", code)
 	}
 	if stdout.String() != project+"\n" {

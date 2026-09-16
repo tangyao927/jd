@@ -10,6 +10,7 @@ import (
 )
 
 func TestInitScriptChangesParentShellDirectoryAndRecordsVisit(t *testing.T) {
+	requirePOSIXShell(t)
 	for _, shellName := range []string{"zsh", "bash", "fish"} {
 		t.Run(shellName, func(t *testing.T) {
 			shellPath, err := exec.LookPath(shellName)
@@ -61,6 +62,7 @@ func TestInitScriptChangesParentShellDirectoryAndRecordsVisit(t *testing.T) {
 }
 
 func TestFishManagementCommandDelegatesWithoutChangingDirectory(t *testing.T) {
+	requirePOSIXShell(t)
 	shellPath, err := exec.LookPath("fish")
 	if err != nil {
 		t.Skip("fish unavailable")
@@ -86,6 +88,7 @@ func TestFishManagementCommandDelegatesWithoutChangingDirectory(t *testing.T) {
 }
 
 func TestManagementCommandDelegatesWithoutChangingDirectory(t *testing.T) {
+	requirePOSIXShell(t)
 	shellPath, err := exec.LookPath("zsh")
 	if err != nil {
 		t.Skip("zsh unavailable")
@@ -111,6 +114,7 @@ func TestManagementCommandDelegatesWithoutChangingDirectory(t *testing.T) {
 }
 
 func TestHelpFlagDelegatesWithoutChangingDirectory(t *testing.T) {
+	requirePOSIXShell(t)
 	shellPath, err := exec.LookPath("zsh")
 	if err != nil {
 		t.Skip("zsh unavailable")
@@ -136,6 +140,7 @@ func TestHelpFlagDelegatesWithoutChangingDirectory(t *testing.T) {
 }
 
 func TestEndOfOptionsAllowsHelpNamedDirectory(t *testing.T) {
+	requirePOSIXShell(t)
 	for _, shellName := range []string{"zsh", "bash", "fish"} {
 		t.Run(shellName, func(t *testing.T) {
 			shellPath, err := exec.LookPath(shellName)
@@ -178,6 +183,7 @@ func TestEndOfOptionsAllowsHelpNamedDirectory(t *testing.T) {
 }
 
 func TestVersionFlagDelegatesWithoutChangingDirectory(t *testing.T) {
+	requirePOSIXShell(t)
 	shellPath, err := exec.LookPath("zsh")
 	if err != nil {
 		t.Skip("zsh unavailable")
@@ -228,7 +234,16 @@ func TestPowerShellInitChangesDirectoryAndRecordsVisit(t *testing.T) {
 	var fake string
 	if runtime.GOOS == "windows" {
 		binary += ".cmd"
-		fake = "@echo off\r\nif \"%1\"==\"_record\" (echo record:%~2>>\"" + logFile + "\" & exit /b 0)\r\nif \"%1\"==\"--version\" (echo jd 0.1.0 & exit /b 0)\r\necho " + target + "\r\n"
+		fake = "@echo off\r\n" +
+			"if \"%1\"==\"_record\" (\r\n" +
+			">>\"" + logFile + "\" echo record:%~2\r\n" +
+			"exit /b 0\r\n" +
+			")\r\n" +
+			"if \"%1\"==\"--version\" (\r\n" +
+			"echo jd 0.1.0\r\n" +
+			"exit /b 0\r\n" +
+			")\r\n" +
+			"echo " + target + "\r\n"
 	} else {
 		fake = "#!/bin/sh\nif [ \"$1\" = \"_record\" ]; then printf 'record:%s\\n' \"$2\" >> \"" + logFile + "\"; exit 0; fi\nif [ \"$1\" = \"--version\" ]; then printf 'jd 0.1.0\\n'; exit 0; fi\nprintf '%s\\n' \"" + target + "\"\n"
 	}
@@ -239,19 +254,59 @@ func TestPowerShellInitChangesDirectoryAndRecordsVisit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := initScript + "\njd project\njd -- --help\njd --version\nWrite-Output ('pwd:' + $PWD.Path)\n"
+	script := initScript + "\njd project\njd '--' --help\njd --version\nWrite-Output ('pwd:' + $PWD.Path)\n"
 	output, err := exec.Command(shellPath, "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("PowerShell integration failed: %v\n%s", err, output)
 	}
-	if strings.TrimSpace(string(output)) != "jd 0.1.0\npwd:"+target {
+	outputLines := shellOutputLines(string(output))
+	if len(outputLines) != 2 || outputLines[0] != "jd 0.1.0" || !strings.HasPrefix(outputLines[1], "pwd:") {
 		t.Fatalf("PowerShell output=%q", output)
 	}
+	assertSameDirectory(t, strings.TrimPrefix(outputLines[1], "pwd:"), target)
 	logData, err := os.ReadFile(logFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(string(logData)) != "record:"+target+"\nrecord:"+target {
+	logLines := shellOutputLines(string(logData))
+	if len(logLines) != 2 {
 		t.Fatalf("PowerShell record log=%q", logData)
+	}
+	for _, line := range logLines {
+		if !strings.HasPrefix(line, "record:") {
+			t.Fatalf("PowerShell record log=%q", logData)
+		}
+		assertSameDirectory(t, strings.TrimPrefix(line, "record:"), target)
+	}
+}
+
+func shellOutputLines(output string) []string {
+	output = strings.ReplaceAll(output, "\r\n", "\n")
+	output = strings.TrimSuffix(output, "\n")
+	if output == "" {
+		return nil
+	}
+	return strings.Split(output, "\n")
+}
+
+func assertSameDirectory(t *testing.T, got, want string) {
+	t.Helper()
+	gotInfo, err := os.Stat(got)
+	if err != nil {
+		t.Fatalf("stat directory %q: %v", got, err)
+	}
+	wantInfo, err := os.Stat(want)
+	if err != nil {
+		t.Fatalf("stat directory %q: %v", want, err)
+	}
+	if !os.SameFile(gotInfo, wantInfo) {
+		t.Fatalf("directory=%q; want same directory as %q", got, want)
+	}
+}
+
+func requirePOSIXShell(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell integration test")
 	}
 }
