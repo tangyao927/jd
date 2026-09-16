@@ -1,4 +1,4 @@
-module jd
+module github.com/tangyao927/jd
 
 go 1.24.0
 

@@ -7,10 +7,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/tangyao927/jd/internal/cli"
+	"github.com/tangyao927/jd/internal/config"
+	"github.com/tangyao927/jd/internal/store"
 	"golang.org/x/term"
-	"jd/internal/cli"
-	"jd/internal/config"
-	"jd/internal/store"
 )
 
 var version = "dev"
@@ -25,19 +25,15 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "jd: resolve paths: %v\n", err)
 		return cli.ExitRuntime
 	}
-	cfg, err := config.Load(paths.ConfigFile)
-	if err != nil {
-		fmt.Fprintf(stderr, "jd: load config: %v\n", err)
-		return cli.ExitRuntime
-	}
-	database, err := store.Open(paths.DatabaseFile)
-	if err != nil {
-		fmt.Fprintf(stderr, "jd: open database %s: %v\n", paths.DatabaseFile, err)
-		if len(args) > 0 && args[0] == "doctor" {
-			fmt.Fprintln(stderr, "jd: back up or move this file aside, then run jd doctor again; jd will not delete it automatically")
+	cfg := config.Default()
+	if cli.RequiresConfig(args) {
+		cfg, err = config.Load(paths.ConfigFile)
+		if err != nil {
+			fmt.Fprintf(stderr, "jd: load config: %v\n", err)
+			return cli.ExitRuntime
 		}
-		return cli.ExitRuntime
 	}
+	database := store.NewLazy(paths.DatabaseFile)
 	defer database.Close()
 	binaryPath, _ := os.Executable()
 	runtime := &cli.Runtime{

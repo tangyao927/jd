@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"jd/internal/nav"
+	"github.com/tangyao927/jd/internal/nav"
 )
 
 func TestModelSelectsHighlightedCandidate(t *testing.T) {

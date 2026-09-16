@@ -1,0 +1,67 @@
+version: 2
+
+project_name: jd
+
+builds:
+  - id: jd-unix
+    main: ./cmd/jd
+    binary: jd
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+  - id: jd-windows
+    main: ./cmd/jd
+    binary: jd
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: unix
+    ids:
+      - jd-unix
+    formats:
+      - tar.gz
+    name_template: jd_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+  - id: windows
+    ids:
+      - jd-windows
+    formats:
+      - zip
+    name_template: jd_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+
+release:
+  draft: false
+  prerelease: auto

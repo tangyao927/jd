@@ -15,7 +15,10 @@ type Options struct {
 
 var validBinding = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-const managementCase = "query|pin|unpin|pins|root|scan|history|config|init|completion|doctor|version|help|-h|--help"
+var managementCommands = []string{
+	"query", "pin", "unpin", "pins", "root", "scan", "history", "config",
+	"init", "completion", "doctor", "version", "help", "-h", "--help", "--version",
+}
 
 func Init(options Options) (string, error) {
 	if options.Bind == "" {
@@ -54,11 +57,13 @@ func posixInit(options Options, zsh bool) string {
 	fmt.Fprintf(&builder, "_JD_BIN=%s\n", binary)
 	fmt.Fprintf(&builder, "%s() {\n", options.Bind)
 	builder.WriteString("  local _jd_arg\n")
+	builder.WriteString("  local _jd_after_separator=0\n")
 	builder.WriteString("  for _jd_arg in \"$@\"; do\n")
-	builder.WriteString("    case \"$_jd_arg\" in -h|--help) \"$_JD_BIN\" \"$@\"; return $? ;; esac\n")
+	builder.WriteString("    [ \"$_jd_after_separator\" -eq 1 ] && continue\n")
+	builder.WriteString("    case \"$_jd_arg\" in --) _jd_after_separator=1 ;; -h|--help) \"$_JD_BIN\" \"$@\"; return $? ;; esac\n")
 	builder.WriteString("  done\n")
 	builder.WriteString("  case \"${1-}\" in\n")
-	fmt.Fprintf(&builder, "    %s) \"$_JD_BIN\" \"$@\"; return $? ;;\n", managementCase)
+	fmt.Fprintf(&builder, "    %s) \"$_JD_BIN\" \"$@\"; return $? ;;\n", strings.Join(managementCommands, "|"))
 	builder.WriteString("  esac\n")
 	builder.WriteString("  local _jd_target _jd_status\n")
 	builder.WriteString("  _jd_target=\"$(\"$_JD_BIN\" \"$@\")\"\n")
@@ -95,14 +100,21 @@ func fishInit(options Options) string {
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "set -g _JD_BIN '%s'\n", quoteFish(options.Binary))
 	fmt.Fprintf(&builder, "function %s\n", options.Bind)
-	builder.WriteString("  if contains -- -h $argv; or contains -- --help $argv\n")
-	builder.WriteString("    command $_JD_BIN $argv\n")
-	builder.WriteString("    return $status\n")
+	builder.WriteString("  set -l _jd_after_separator 0\n")
+	builder.WriteString("  for _jd_arg in $argv\n")
+	builder.WriteString("    if test $_jd_after_separator -eq 1; continue; end\n")
+	builder.WriteString("    switch $_jd_arg\n")
+	builder.WriteString("      case --\n")
+	builder.WriteString("        set _jd_after_separator 1\n")
+	builder.WriteString("      case -h --help\n")
+	builder.WriteString("        command $_JD_BIN $argv\n")
+	builder.WriteString("        return $status\n")
+	builder.WriteString("    end\n")
 	builder.WriteString("  end\n")
 	builder.WriteString("  set -l _jd_first ''\n")
 	builder.WriteString("  if test (count $argv) -gt 0; set _jd_first $argv[1]; end\n")
 	builder.WriteString("  switch $_jd_first\n")
-	fmt.Fprintf(&builder, "    case %s\n", strings.ReplaceAll(managementCase, "|", " "))
+	fmt.Fprintf(&builder, "    case %s\n", strings.Join(managementCommands, " "))
 	builder.WriteString("      command $_JD_BIN $argv\n")
 	builder.WriteString("      return $status\n")
 	builder.WriteString("  end\n")
@@ -131,10 +143,19 @@ func powerShellInit(options Options) string {
 	binary := strings.ReplaceAll(options.Binary, "'", "''")
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "$global:__jd_bin = '%s'\n", binary)
-	builder.WriteString("$global:__jd_management = @('query','pin','unpin','pins','root','scan','history','config','init','completion','doctor','version','help')\n")
+	powerShellCommands := make([]string, 0, len(managementCommands))
+	for _, command := range managementCommands {
+		powerShellCommands = append(powerShellCommands, "'"+strings.ReplaceAll(command, "'", "''")+"'")
+	}
+	fmt.Fprintf(&builder, "$global:__jd_management = @(%s)\n", strings.Join(powerShellCommands, ","))
 	fmt.Fprintf(&builder, "function global:%s {\n", options.Bind)
 	builder.WriteString("  param([Parameter(ValueFromRemainingArguments=$true)][object[]]$RemainingArgs)\n")
-	builder.WriteString("  if ($RemainingArgs -contains '-h' -or $RemainingArgs -contains '--help') { & $global:__jd_bin @RemainingArgs; return }\n")
+	builder.WriteString("  $beforeSeparator = $true\n")
+	builder.WriteString("  foreach ($arg in $RemainingArgs) {\n")
+	builder.WriteString("    if (-not $beforeSeparator) { continue }\n")
+	builder.WriteString("    if ([string]$arg -eq '--') { $beforeSeparator = $false; continue }\n")
+	builder.WriteString("    if ([string]$arg -eq '-h' -or [string]$arg -eq '--help') { & $global:__jd_bin @RemainingArgs; return }\n")
+	builder.WriteString("  }\n")
 	builder.WriteString("  $first = if ($RemainingArgs.Count -gt 0) { [string]$RemainingArgs[0] } else { '' }\n")
 	builder.WriteString("  if ($global:__jd_management -contains $first) { & $global:__jd_bin @RemainingArgs; return }\n")
 	builder.WriteString("  $targetOutput = @(& $global:__jd_bin @RemainingArgs)\n")

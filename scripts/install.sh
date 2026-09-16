@@ -6,13 +6,16 @@ end_marker='# <<< jd initialize <<<'
 bind='jd'
 shell_name=''
 binary_source=''
+source_build=0
+release_version='latest'
+version_set=0
 dry_run=0
 uninstall=0
 purge=0
 assume_yes=0
 
 usage() {
-  printf '%s\n' 'Usage: ./install.sh [--bind NAME] [--shell zsh|bash|fish] [--binary PATH] [--dry-run] [--uninstall] [--purge --yes]'
+  printf '%s\n' 'Usage: install.sh [--version latest|vX.Y.Z | --source | --binary PATH] [--bind NAME] [--shell zsh|bash|fish] [--dry-run] [--uninstall] [--purge --yes]'
 }
 
 while [ "$#" -gt 0 ]; do
@@ -20,6 +23,8 @@ while [ "$#" -gt 0 ]; do
     --bind) bind=${2-}; shift 2 ;;
     --shell) shell_name=${2-}; shift 2 ;;
     --binary) binary_source=${2-}; shift 2 ;;
+    --source) source_build=1; shift ;;
+    --version) release_version=${2-}; version_set=1; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
     --uninstall) uninstall=1; shift ;;
     --purge) purge=1; shift ;;
@@ -28,6 +33,19 @@ while [ "$#" -gt 0 ]; do
     *) printf 'jd installer: unknown option %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+if [ "$source_build" -eq 1 ] && [ -n "$binary_source" ]; then
+  printf '%s\n' 'jd installer: --source and --binary cannot be used together' >&2
+  exit 2
+fi
+if [ "$version_set" -eq 1 ] && { [ "$source_build" -eq 1 ] || [ -n "$binary_source" ]; }; then
+  printf '%s\n' 'jd installer: --version cannot be combined with --source or --binary' >&2
+  exit 2
+fi
+if [ "$release_version" != latest ] && ! printf '%s\n' "$release_version" | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ { valid = 1 } END { exit !valid }'; then
+  printf 'jd installer: invalid version %s; use latest or vX.Y.Z\n' "$release_version" >&2
+  exit 2
+fi
 
 case "$bind" in
   ''|[0-9]*|*[!A-Za-z0-9_]*) printf 'jd installer: invalid binding %s\n' "$bind" >&2; exit 2 ;;
@@ -41,7 +59,6 @@ case "$shell_name" in
   *) printf 'jd installer: unsupported shell %s\n' "$shell_name" >&2; exit 2 ;;
 esac
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 bin_dir=${JD_INSTALL_BIN_DIR:-${XDG_BIN_HOME:-$HOME/.local/bin}}
 destination=$bin_dir/jd
 if [ -n "${JD_INSTALL_PROFILE:-}" ]; then
@@ -128,14 +145,6 @@ if [ "$uninstall" -eq 1 ]; then
   exit 0
 fi
 
-if [ -z "$binary_source" ]; then
-  temporary_dir=$(mktemp -d "${TMPDIR:-/tmp}/jd-install.XXXXXX")
-  trap 'rm -rf "$temporary_dir"' EXIT HUP INT TERM
-  binary_source=$temporary_dir/jd
-  (cd "$script_dir" && env GOTOOLCHAIN=local go build -trimpath -o "$binary_source" ./cmd/jd)
-fi
-if [ ! -f "$binary_source" ]; then printf 'jd installer: binary not found: %s\n' "$binary_source" >&2; exit 2; fi
-
 existing=$(command -v "$bind" 2>/dev/null || true)
 if [ -n "$existing" ] && [ "$existing" != "$destination" ] && ! { [ -f "$profile" ] && grep -Fq "$start_marker" "$profile"; }; then
   printf 'jd installer: binding %s already resolves to %s; choose --bind NAME\n' "$bind" "$existing" >&2
@@ -143,10 +152,58 @@ if [ -n "$existing" ] && [ "$existing" != "$destination" ] && ! { [ -f "$profile
 fi
 
 if [ "$dry_run" -eq 1 ]; then
-  printf 'Would install %s to %s and update %s:\n' "$binary_source" "$destination" "$profile"
+  if [ -n "$binary_source" ]; then source_description=$binary_source
+  elif [ "$source_build" -eq 1 ]; then source_description='the current source checkout'
+  else source_description="jd release $release_version"
+  fi
+  printf 'Would install %s to %s and update %s:\n' "$source_description" "$destination" "$profile"
   write_block
   exit 0
 fi
+
+if [ -z "$binary_source" ]; then
+  temporary_dir=$(mktemp -d "${TMPDIR:-/tmp}/jd-install.XXXXXX")
+  trap 'rm -rf "$temporary_dir"' EXIT HUP INT TERM
+  binary_source=$temporary_dir/jd
+  if [ "$source_build" -eq 1 ]; then
+    script_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+    (cd "$script_dir" && env GOTOOLCHAIN=local go build -trimpath -o "$binary_source" ./cmd/jd)
+  else
+    case "$(uname -s)" in
+      Darwin) release_os=darwin ;;
+      Linux) release_os=linux ;;
+      *) printf 'jd installer: unsupported operating system %s\n' "$(uname -s)" >&2; exit 2 ;;
+    esac
+    case "$(uname -m)" in
+      x86_64|amd64) release_arch=amd64 ;;
+      arm64|aarch64) release_arch=arm64 ;;
+      *) printf 'jd installer: unsupported architecture %s\n' "$(uname -m)" >&2; exit 2 ;;
+    esac
+    release_base=${JD_RELEASE_BASE_URL:-https://github.com/tangyao927/jd/releases}
+    if [ "$release_version" = latest ]; then
+      download_base=$release_base/latest/download
+    else
+      download_base=$release_base/download/$release_version
+    fi
+    asset=jd_${release_os}_${release_arch}.tar.gz
+    command -v curl >/dev/null 2>&1 || { printf '%s\n' 'jd installer: curl is required to download releases' >&2; exit 1; }
+    curl -fsSL "$download_base/$asset" -o "$temporary_dir/$asset"
+    curl -fsSL "$download_base/checksums.txt" -o "$temporary_dir/checksums.txt"
+    expected=$(awk -v asset="$asset" '$2 == asset { print $1; exit }' "$temporary_dir/checksums.txt")
+    [ -n "$expected" ] || { printf 'jd installer: checksum missing for %s\n' "$asset" >&2; exit 1; }
+    if command -v shasum >/dev/null 2>&1; then
+      actual=$(shasum -a 256 "$temporary_dir/$asset" | awk '{print $1}')
+    elif command -v sha256sum >/dev/null 2>&1; then
+      actual=$(sha256sum "$temporary_dir/$asset" | awk '{print $1}')
+    else
+      printf '%s\n' 'jd installer: shasum or sha256sum is required to verify releases' >&2
+      exit 1
+    fi
+    [ "$actual" = "$expected" ] || { printf 'jd installer: checksum mismatch for %s\n' "$asset" >&2; exit 1; }
+    tar -xzf "$temporary_dir/$asset" -C "$temporary_dir" jd
+  fi
+fi
+if [ ! -f "$binary_source" ]; then printf 'jd installer: binary not found: %s\n' "$binary_source" >&2; exit 2; fi
 
 mkdir -p "$bin_dir" "$(dirname "$profile")"
 temporary_binary=$(mktemp "$bin_dir/.jd.XXXXXX")

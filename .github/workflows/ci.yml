@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     strategy:
@@ -11,6 +14,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -21,12 +25,12 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y fish
       - name: Test
-        run: go test ./...
+        run: go test -count=1 ./...
       - name: Vet
         run: go vet ./...
       - name: Race test
         if: runner.os != 'Windows'
-        run: go test -race ./...
+        run: go test -race -count=1 ./...
       - name: Validate POSIX installer syntax
         if: runner.os != 'Windows'
         run: sh -n scripts/install.sh
@@ -35,22 +39,22 @@ jobs:
         shell: pwsh
         run: '[void][scriptblock]::Create((Get-Content -Raw scripts/install.ps1))'
 
-  cross-build:
+  quality:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        goos: [darwin, linux, windows]
-        goarch: [amd64, arm64]
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24.x'
           cache: true
-      - name: Build
-        env:
-          CGO_ENABLED: '0'
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: go build -trimpath -o dist/jd-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/jd
+      - name: Verify modules
+        run: go mod verify
+      - name: Check formatting
+        run: test -z "$(gofmt -l cmd internal)"
+      - name: Verify release packaging
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --snapshot --clean
