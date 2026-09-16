@@ -193,7 +193,7 @@ func TestExactPinClearsMissingMarkerWhenDirectoryReturns(t *testing.T) {
 }
 
 func TestRootAddScansDirectoriesForQueries(t *testing.T) {
-	runtime, _, stdout, _ := testRuntime(t)
+	runtime, db, stdout, _ := testRuntime(t)
 	project := filepath.Join(runtime.Cwd(), "projects", "api")
 	ignored := filepath.Join(runtime.Cwd(), "projects", "node_modules", "pkg")
 	for _, path := range []string{project, ignored} {
@@ -205,16 +205,25 @@ func TestRootAddScansDirectoriesForQueries(t *testing.T) {
 	if code := Execute(context.Background(), []string{"root", "add", root}, runtime); code != ExitOK {
 		t.Fatalf("root add code=%d", code)
 	}
+	entries, err := db.ListDirectories(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{root, project}
+	if len(entries) != len(want) {
+		t.Fatalf("scanned entries = %#v; want %q", entries, want)
+	}
+	for index, path := range want {
+		if entries[index].Path != path || !entries[index].Scanned {
+			t.Fatalf("scanned entry %d = %#v; want scanned path %q", index, entries[index], path)
+		}
+	}
 	stdout.Reset()
 	if code := Execute(context.Background(), []string{"--first", "api"}, runtime); code != ExitOK {
 		t.Fatalf("resolve scanned directory code=%d", code)
 	}
 	if stdout.String() != project+"\n" {
 		t.Fatalf("scanned target = %q; want %q", stdout.String(), project+"\n")
-	}
-	stdout.Reset()
-	if code := Execute(context.Background(), []string{"pkg"}, runtime); code != ExitNoMatch {
-		t.Fatalf("ignored directory resolve code=%d; want %d", code, ExitNoMatch)
 	}
 }
 
