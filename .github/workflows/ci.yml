@@ -1,0 +1,56 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache: true
+      - name: Install fish for shell integration
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y fish
+      - name: Test
+        run: go test ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Race test
+        if: runner.os != 'Windows'
+        run: go test -race ./...
+      - name: Validate POSIX installer syntax
+        if: runner.os != 'Windows'
+        run: sh -n scripts/install.sh
+      - name: Validate PowerShell installer syntax
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: '[void][scriptblock]::Create((Get-Content -Raw scripts/install.ps1))'
+
+  cross-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [darwin, linux, windows]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache: true
+      - name: Build
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -trimpath -o dist/jd-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/jd
