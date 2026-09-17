@@ -12,12 +12,12 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"jd/internal/config"
-	"jd/internal/nav"
-	"jd/internal/scan"
-	jdshell "jd/internal/shell"
-	"jd/internal/store"
-	"jd/internal/ui"
+	"github.com/tangyao927/jd/internal/config"
+	"github.com/tangyao927/jd/internal/nav"
+	"github.com/tangyao927/jd/internal/scan"
+	jdshell "github.com/tangyao927/jd/internal/shell"
+	"github.com/tangyao927/jd/internal/store"
+	"github.com/tangyao927/jd/internal/ui"
 )
 
 const (
@@ -30,7 +30,7 @@ const (
 )
 
 type Runtime struct {
-	Store       *store.Store
+	Store       store.Database
 	Config      config.Config
 	Paths       config.Paths
 	Stdin       io.Reader
@@ -83,8 +83,40 @@ func Execute(ctx context.Context, args []string, runtime *Runtime) int {
 	return ExitUsage
 }
 
+// RequiresConfig reports whether executing args needs the user's configuration.
+// Help, version, and completion must remain available when configuration is broken.
+func RequiresConfig(args []string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			return true
+		}
+		if arg == "-h" || arg == "--help" {
+			return false
+		}
+	}
+	for _, arg := range args {
+		switch arg {
+		case "--first":
+			continue
+		case "--version":
+			return false
+		case "help", "version", "completion":
+			return false
+		}
+		if strings.HasPrefix(arg, "-") {
+			return false
+		}
+		return true
+	}
+	return true
+}
+
 func newRootCommand(runtime *Runtime) *cobra.Command {
 	var first bool
+	version := runtime.Version
+	if version == "" {
+		version = "dev"
+	}
 	root := &cobra.Command{
 		Use:   "jd [query...]",
 		Short: "Jump to directories quickly",
@@ -93,6 +125,8 @@ func newRootCommand(runtime *Runtime) *cobra.Command {
 			return resolve(cmd.Context(), runtime, args, first)
 		},
 	}
+	root.Version = version
+	root.SetVersionTemplate("jd {{.Version}}\n")
 	root.Flags().BoolVar(&first, "first", false, "choose the highest ranked result without prompting")
 	root.AddCommand(
 		newJumpCommand(runtime), newQueryCommand(runtime), newPinCommand(runtime), newUnpinCommand(runtime), newPinsCommand(runtime),
@@ -647,7 +681,7 @@ func newDoctorCommand(runtime *Runtime) *cobra.Command {
 			}
 			fmt.Fprintf(runtime.Stdout, "config: ok (%s)\n", runtime.Paths.ConfigFile)
 			if err := runtime.Store.Ping(cmd.Context()); err != nil {
-				return fail(ExitRuntime, "database: %v", err)
+				return fail(ExitRuntime, "database: %v; back up or move %s aside, then run jd doctor again; jd will not delete it automatically", err, runtime.Paths.DatabaseFile)
 			}
 			fmt.Fprintf(runtime.Stdout, "database: ok (%s)\n", runtime.Paths.DatabaseFile)
 			fmt.Fprintln(runtime.Stdout, "shells: zsh bash fish powershell")

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"jd/internal/nav"
+	"github.com/tangyao927/jd/internal/nav"
 )
 
 var ErrCancelled = errors.New("selection cancelled")

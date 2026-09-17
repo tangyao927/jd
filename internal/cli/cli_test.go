@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"jd/internal/config"
-	"jd/internal/store"
+	"github.com/tangyao927/jd/internal/config"
+	"github.com/tangyao927/jd/internal/store"
 )
 
 func TestDirectPathPrintsAbsoluteTarget(t *testing.T) {
@@ -67,6 +67,49 @@ func TestFirstChoosesHighestRankedCandidate(t *testing.T) {
 	code := Execute(context.Background(), []string{"--first", "api"}, runtime)
 	if code != ExitOK || stdout.String() != recent+"\n" {
 		t.Fatalf("Execute() code=%d stdout=%q; want %q", code, stdout.String(), recent+"\n")
+	}
+}
+
+func TestVersionFlagMatchesVersionCommand(t *testing.T) {
+	runtime, _, stdout, stderr := testRuntime(t)
+	runtime.Version = "0.1.0"
+
+	if code := Execute(context.Background(), []string{"--version"}, runtime); code != ExitOK {
+		t.Fatalf("--version code=%d stderr=%q", code, stderr.String())
+	}
+	if stdout.String() != "jd 0.1.0\n" {
+		t.Fatalf("--version output=%q", stdout.String())
+	}
+
+	stdout.Reset()
+	if code := Execute(context.Background(), []string{"version"}, runtime); code != ExitOK {
+		t.Fatalf("version code=%d stderr=%q", code, stderr.String())
+	}
+	if stdout.String() != "jd 0.1.0\n" {
+		t.Fatalf("version output=%q", stdout.String())
+	}
+}
+
+func TestRequiresConfigHonorsStatelessCommandsAndOptionSeparator(t *testing.T) {
+	tests := []struct {
+		args []string
+		want bool
+	}{
+		{args: nil, want: true},
+		{args: []string{"--help"}, want: false},
+		{args: []string{"pin", "--help"}, want: false},
+		{args: []string{"--", "--help"}, want: true},
+		{args: []string{"version"}, want: false},
+		{args: []string{"--version"}, want: false},
+		{args: []string{"completion", "zsh"}, want: false},
+		{args: []string{"help", "root"}, want: false},
+		{args: []string{"init", "zsh"}, want: true},
+		{args: []string{"--first", "api"}, want: true},
+	}
+	for _, tt := range tests {
+		if got := RequiresConfig(tt.args); got != tt.want {
+			t.Errorf("RequiresConfig(%q)=%t; want %t", tt.args, got, tt.want)
+		}
 	}
 }
 
@@ -150,7 +193,7 @@ func TestExactPinClearsMissingMarkerWhenDirectoryReturns(t *testing.T) {
 }
 
 func TestRootAddScansDirectoriesForQueries(t *testing.T) {
-	runtime, _, stdout, _ := testRuntime(t)
+	runtime, db, stdout, _ := testRuntime(t)
 	project := filepath.Join(runtime.Cwd(), "projects", "api")
 	ignored := filepath.Join(runtime.Cwd(), "projects", "node_modules", "pkg")
 	for _, path := range []string{project, ignored} {
@@ -162,16 +205,25 @@ func TestRootAddScansDirectoriesForQueries(t *testing.T) {
 	if code := Execute(context.Background(), []string{"root", "add", root}, runtime); code != ExitOK {
 		t.Fatalf("root add code=%d", code)
 	}
+	entries, err := db.ListDirectories(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{root, project}
+	if len(entries) != len(want) {
+		t.Fatalf("scanned entries = %#v; want %q", entries, want)
+	}
+	for index, path := range want {
+		if entries[index].Path != path || !entries[index].Scanned {
+			t.Fatalf("scanned entry %d = %#v; want scanned path %q", index, entries[index], path)
+		}
+	}
 	stdout.Reset()
-	if code := Execute(context.Background(), []string{"api"}, runtime); code != ExitOK {
+	if code := Execute(context.Background(), []string{"--first", "api"}, runtime); code != ExitOK {
 		t.Fatalf("resolve scanned directory code=%d", code)
 	}
 	if stdout.String() != project+"\n" {
 		t.Fatalf("scanned target = %q; want %q", stdout.String(), project+"\n")
-	}
-	stdout.Reset()
-	if code := Execute(context.Background(), []string{"pkg"}, runtime); code != ExitNoMatch {
-		t.Fatalf("ignored directory resolve code=%d; want %d", code, ExitNoMatch)
 	}
 }
 
