@@ -47,6 +47,23 @@ if [ "$release_version" != latest ] && ! printf '%s\n' "$release_version" | awk 
   exit 2
 fi
 
+source_root=''
+case "$0" in
+  */*)
+    candidate_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+    if [ -f "$candidate_root/go.mod" ] && [ -f "$candidate_root/cmd/jd/main.go" ] && grep -Eq '^module[[:space:]]+github.com/tangyao927/jd[[:space:]]*$' "$candidate_root/go.mod"; then
+      source_root=$candidate_root
+    fi
+    ;;
+esac
+if [ "$source_build" -eq 1 ] && [ -z "$source_root" ]; then
+  printf '%s\n' 'jd installer: --source requires scripts/install.sh from a jd source checkout' >&2
+  exit 2
+fi
+if [ "$version_set" -eq 0 ] && [ "$source_build" -eq 0 ] && [ -z "$binary_source" ] && [ -n "$source_root" ]; then
+  source_build=1
+fi
+
 case "$bind" in
   ''|[0-9]*|*[!A-Za-z0-9_]*) printf 'jd installer: invalid binding %s\n' "$bind" >&2; exit 2 ;;
 esac
@@ -118,6 +135,16 @@ write_block() {
   esac
 }
 
+download_release_file() {
+  download_url=$1
+  download_target=$2
+  if ! curl -fsSL "$download_url" -o "$download_target"; then
+    printf 'jd installer: release download failed: %s\n' "$download_url" >&2
+    printf '%s\n' 'jd installer: from a source checkout, run ./scripts/install.sh --source' >&2
+    return 1
+  fi
+}
+
 if [ "$uninstall" -eq 1 ]; then
   if [ "$dry_run" -eq 1 ]; then
     printf 'Would remove managed block from %s and binary %s\n' "$profile" "$destination"
@@ -166,8 +193,7 @@ if [ -z "$binary_source" ]; then
   trap 'rm -rf "$temporary_dir"' EXIT HUP INT TERM
   binary_source=$temporary_dir/jd
   if [ "$source_build" -eq 1 ]; then
-    script_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-    (cd "$script_dir" && env GOTOOLCHAIN=local go build -trimpath -o "$binary_source" ./cmd/jd)
+    (cd "$source_root" && env GOTOOLCHAIN=local go build -trimpath -o "$binary_source" ./cmd/jd)
   else
     case "$(uname -s)" in
       Darwin) release_os=darwin ;;
@@ -187,8 +213,8 @@ if [ -z "$binary_source" ]; then
     fi
     asset=jd_${release_os}_${release_arch}.tar.gz
     command -v curl >/dev/null 2>&1 || { printf '%s\n' 'jd installer: curl is required to download releases' >&2; exit 1; }
-    curl -fsSL "$download_base/$asset" -o "$temporary_dir/$asset"
-    curl -fsSL "$download_base/checksums.txt" -o "$temporary_dir/checksums.txt"
+    download_release_file "$download_base/$asset" "$temporary_dir/$asset"
+    download_release_file "$download_base/checksums.txt" "$temporary_dir/checksums.txt"
     expected=$(awk -v asset="$asset" '$2 == asset { print $1; exit }' "$temporary_dir/checksums.txt")
     [ -n "$expected" ] || { printf 'jd installer: checksum missing for %s\n' "$asset" >&2; exit 1; }
     if command -v shasum >/dev/null 2>&1; then

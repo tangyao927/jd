@@ -18,6 +18,20 @@ if ($Version -ne 'latest' -and $Version -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
 if ($Source -and $Binary) { throw '-Source and -Binary cannot be used together' }
 if ($PSBoundParameters.ContainsKey('Version') -and ($Source -or $Binary)) { throw '-Version cannot be combined with -Source or -Binary' }
 
+$ProjectRoot = $null
+if ($PSScriptRoot) {
+    $CandidateRoot = Split-Path -Parent $PSScriptRoot
+    $ModulePath = Join-Path $CandidateRoot 'go.mod'
+    $MainPath = Join-Path $CandidateRoot 'cmd\jd\main.go'
+    if ((Test-Path -PathType Leaf $ModulePath) -and (Test-Path -PathType Leaf $MainPath)) {
+        $ModuleLine = Get-Content -LiteralPath $ModulePath | Select-Object -First 1
+        if ($ModuleLine -eq 'module github.com/tangyao927/jd') { $ProjectRoot = $CandidateRoot }
+    }
+}
+$UseSource = [bool]$Source
+if (-not $PSBoundParameters.ContainsKey('Version') -and -not $Binary -and $ProjectRoot) { $UseSource = $true }
+if ($Source -and -not $ProjectRoot) { throw '-Source requires scripts/install.ps1 from a jd source checkout' }
+
 $BinDir = if ($env:JD_INSTALL_BIN_DIR) { $env:JD_INSTALL_BIN_DIR } else { Join-Path $env:LOCALAPPDATA 'Programs\jd' }
 $Destination = Join-Path $BinDir 'jd.exe'
 $ProfilePath = if ($env:JD_INSTALL_PROFILE) { $env:JD_INSTALL_PROFILE } else { $PROFILE.CurrentUserCurrentHost }
@@ -44,6 +58,14 @@ function Get-Sha256([string]$Path) {
     } finally {
         if ($Hasher) { $Hasher.Dispose() }
         if ($Stream) { $Stream.Dispose() }
+    }
+}
+
+function Get-ReleaseFile([string]$Uri, [string]$OutFile) {
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $OutFile
+    } catch {
+        throw "release download failed: $Uri`nFrom a source checkout, run .\scripts\install.ps1 -Source"
     }
 }
 
@@ -87,7 +109,7 @@ if ($Existing -and $Existing.Source -ne $Destination -and -not $HadMarker) {
     throw "Binding $Bind already exists; choose -Bind NAME"
 }
 if ($DryRun) {
-    $SourceDescription = if ($Binary) { $Binary } elseif ($Source) { 'the current source checkout' } else { "jd release $Version" }
+    $SourceDescription = if ($Binary) { $Binary } elseif ($UseSource) { 'the current source checkout' } else { "jd release $Version" }
     Write-Output "Would install $SourceDescription to $Destination and update $ProfilePath`n$Block"
     exit 0
 }
@@ -97,9 +119,7 @@ try {
     if (-not $Binary) {
         $TemporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) ("jd-install-" + [guid]::NewGuid())
         New-Item -ItemType Directory -Force $TemporaryDirectory | Out-Null
-        if ($Source) {
-            if (-not $PSScriptRoot) { throw '-Source requires install.ps1 to run from a source checkout' }
-            $ProjectRoot = Split-Path -Parent $PSScriptRoot
+        if ($UseSource) {
             $Binary = Join-Path $TemporaryDirectory 'jd.exe'
             Push-Location $ProjectRoot
             try { & go build -trimpath -o $Binary ./cmd/jd; if ($LASTEXITCODE -ne 0) { throw 'go build failed' } }
@@ -117,8 +137,8 @@ try {
             $Asset = "jd_windows_$Architecture.zip"
             $ArchivePath = Join-Path $TemporaryDirectory $Asset
             $ChecksumPath = Join-Path $TemporaryDirectory 'checksums.txt'
-            Invoke-WebRequest -UseBasicParsing -Uri "$DownloadBase/$Asset" -OutFile $ArchivePath
-            Invoke-WebRequest -UseBasicParsing -Uri "$DownloadBase/checksums.txt" -OutFile $ChecksumPath
+            Get-ReleaseFile "$DownloadBase/$Asset" $ArchivePath
+            Get-ReleaseFile "$DownloadBase/checksums.txt" $ChecksumPath
             $Pattern = '^([A-Fa-f0-9]{64})\s+\*?' + [regex]::Escape($Asset) + '$'
             $ChecksumLine = Get-Content $ChecksumPath | Where-Object { $_ -match $Pattern } | Select-Object -First 1
             if (-not $ChecksumLine) { throw "Checksum missing for $Asset" }

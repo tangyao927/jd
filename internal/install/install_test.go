@@ -3,6 +3,7 @@ package install_test
 import (
 	"archive/tar"
 	"archive/zip"
+	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"fmt"
@@ -119,6 +120,68 @@ func TestUnixInstallerDryRunDoesNotWrite(t *testing.T) {
 	}
 }
 
+func TestUnixInstallerRunFromCheckoutDefaultsToCurrentSource(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX installer test")
+	}
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	profile := filepath.Join(root, "zshrc")
+	command := exec.Command("sh", filepath.Join(projectRoot(t), "scripts", "install.sh"), "--shell", "zsh", "--bind", "jd_test")
+	command.Env = append(os.Environ(),
+		"JD_RELEASE_BASE_URL=http://127.0.0.1:1",
+		"JD_INSTALL_BIN_DIR="+binDir,
+		"JD_INSTALL_PROFILE="+profile,
+	)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("source install failed: %v\n%s", err, output)
+	}
+	installed := filepath.Join(binDir, "jd")
+	output, err := exec.Command(installed, "version").CombinedOutput()
+	if err != nil {
+		t.Fatalf("installed source binary failed: %v\n%s", err, output)
+	}
+	if string(output) != "jd dev\n" {
+		t.Fatalf("installed source version=%q; want %q", output, "jd dev\n")
+	}
+}
+
+func TestUnixInstallerReadFromStdinDefaultsToLatestRelease(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX installer test")
+	}
+	root := t.TempDir()
+	assetName := fmt.Sprintf("jd_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+	binary := []byte("#!/bin/sh\ncase \"$1\" in init) printf 'jd_test() { :; }\\n' ;; completion) printf '# completion\\n' ;; esac\n")
+	releaseRoot := filepath.Join(root, "releases")
+	writeUnixRelease(t, filepath.Join(releaseRoot, "latest", "download"), assetName, binary, false)
+	script, err := os.ReadFile(filepath.Join(projectRoot(t), "scripts", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	binDir := filepath.Join(root, "bin")
+	profile := filepath.Join(root, "zshrc")
+	command := exec.Command("sh", "-s", "--", "--shell", "zsh", "--bind", "jd_test")
+	command.Stdin = bytes.NewReader(script)
+	command.Env = append(os.Environ(),
+		"SHELL=/bin/zsh",
+		"JD_RELEASE_BASE_URL=file://"+releaseRoot,
+		"JD_INSTALL_BIN_DIR="+binDir,
+		"JD_INSTALL_PROFILE="+profile,
+	)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("streamed release install failed: %v\n%s", err, output)
+	}
+	installed, err := os.ReadFile(filepath.Join(binDir, "jd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(installed) != string(binary) {
+		t.Fatalf("installed binary=%q; want streamed release binary", installed)
+	}
+}
+
 func TestUnixInstallerDownloadsAndVerifiesRelease(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX installer test")
@@ -181,6 +244,41 @@ func TestUnixInstallerRejectsChecksumMismatchWithoutReplacingBinary(t *testing.T
 	}
 	if string(installed) != "existing binary" {
 		t.Fatalf("checksum failure replaced destination with %q", installed)
+	}
+}
+
+func TestUnixInstallerReleaseDownloadFailurePreservesBinaryWithSourceHint(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX installer test")
+	}
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(binDir, "jd")
+	if err := os.WriteFile(destination, []byte("existing binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("sh", filepath.Join(projectRoot(t), "scripts", "install.sh"), "--version", "v0.1.0", "--shell", "zsh", "--bind", "jd_test")
+	command.Env = append(os.Environ(),
+		"JD_RELEASE_BASE_URL=file://"+filepath.Join(root, "missing-releases"),
+		"JD_INSTALL_BIN_DIR="+binDir,
+		"JD_INSTALL_PROFILE="+filepath.Join(root, "zshrc"),
+	)
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("missing release install succeeded:\n%s", output)
+	}
+	if !strings.Contains(string(output), "release download failed") || !strings.Contains(string(output), "--source") {
+		t.Fatalf("download failure lacks source guidance:\n%s", output)
+	}
+	installed, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(installed) != "existing binary" {
+		t.Fatalf("download failure replaced destination with %q", installed)
 	}
 }
 
@@ -285,6 +383,66 @@ func TestPowerShellInstallerDownloadsAndVerifiesRelease(t *testing.T) {
 	}
 }
 
+func TestPowerShellInstallerRunFromCheckoutDefaultsToCurrentSource(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows installer test")
+	}
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	profile := filepath.Join(root, "profile.ps1")
+	command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", filepath.Join(projectRoot(t), "scripts", "install.ps1"), "-Bind", "jd_test")
+	command.Env = append(os.Environ(),
+		"JD_RELEASE_BASE_URL=http://127.0.0.1:1",
+		"JD_INSTALL_BIN_DIR="+binDir,
+		"JD_INSTALL_PROFILE="+profile,
+	)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("PowerShell source install failed: %v\n%s", err, output)
+	}
+	installed := filepath.Join(binDir, "jd.exe")
+	output, err := exec.Command(installed, "version").CombinedOutput()
+	if err != nil {
+		t.Fatalf("installed source binary failed: %v\n%s", err, output)
+	}
+	if strings.TrimSpace(string(output)) != "jd dev" {
+		t.Fatalf("installed source version=%q; want %q", output, "jd dev")
+	}
+}
+
+func TestPowerShellInstallerEvaluatedFromTextDefaultsToLatestRelease(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows installer test")
+	}
+	root := t.TempDir()
+	assetName := fmt.Sprintf("jd_windows_%s.zip", runtime.GOARCH)
+	binary := []byte("release-binary")
+	releaseRoot := filepath.Join(root, "releases")
+	writeWindowsRelease(t, filepath.Join(releaseRoot, "latest", "download"), assetName, binary, false)
+	server := httptest.NewServer(http.FileServer(http.Dir(releaseRoot)))
+	t.Cleanup(server.Close)
+
+	binDir := filepath.Join(root, "bin")
+	profile := filepath.Join(root, "profile.ps1")
+	scriptPath := filepath.Join(projectRoot(t), "scripts", "install.ps1")
+	commandText := fmt.Sprintf("$script = Get-Content -Raw -LiteralPath '%s'; Invoke-Expression $script", strings.ReplaceAll(scriptPath, "'", "''"))
+	command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", commandText)
+	command.Env = append(os.Environ(),
+		"JD_RELEASE_BASE_URL="+server.URL,
+		"JD_INSTALL_BIN_DIR="+binDir,
+		"JD_INSTALL_PROFILE="+profile,
+	)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("evaluated release install failed: %v\n%s", err, output)
+	}
+	installed, err := os.ReadFile(filepath.Join(binDir, "jd.exe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(installed) != string(binary) {
+		t.Fatalf("installed binary=%q; want evaluated release binary", installed)
+	}
+}
+
 func TestPowerShellInstallerRejectsChecksumMismatch(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows installer test")
@@ -321,6 +479,43 @@ func TestPowerShellInstallerRejectsChecksumMismatch(t *testing.T) {
 	}
 	if string(installed) != "existing binary" {
 		t.Fatalf("checksum failure replaced destination with %q", installed)
+	}
+}
+
+func TestPowerShellInstallerReleaseDownloadFailurePreservesBinaryWithSourceHint(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows installer test")
+	}
+	root := t.TempDir()
+	server := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(server.Close)
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(binDir, "jd.exe")
+	if err := os.WriteFile(destination, []byte("existing binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", filepath.Join(projectRoot(t), "scripts", "install.ps1"), "-Version", "v0.1.0", "-Bind", "jd_test")
+	command.Env = append(os.Environ(),
+		"JD_RELEASE_BASE_URL="+server.URL,
+		"JD_INSTALL_BIN_DIR="+binDir,
+		"JD_INSTALL_PROFILE="+filepath.Join(root, "profile.ps1"),
+	)
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("missing PowerShell release install succeeded:\n%s", output)
+	}
+	if !strings.Contains(string(output), "release download failed") || !strings.Contains(string(output), "-Source") {
+		t.Fatalf("PowerShell download failure lacks source guidance:\n%s", output)
+	}
+	installed, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(installed) != "existing binary" {
+		t.Fatalf("PowerShell download failure replaced destination with %q", installed)
 	}
 }
 

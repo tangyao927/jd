@@ -25,31 +25,35 @@ curl -fsSL https://raw.githubusercontent.com/tangyao927/jd/main/scripts/install.
 irm https://raw.githubusercontent.com/tangyao927/jd/main/scripts/install.ps1 | iex
 ```
 
-安装器默认下载最新的 GitHub Release，校验 SHA-256 后安装到用户目录，并更新当前 shell 的 profile。安装完成后重新打开终端，或手动加载 profile。
+通过上述网络命令运行安装器时，会下载最新的 GitHub Release，校验 SHA-256 后安装到用户目录，并更新当前 shell 的 profile。安装完成后重新打开终端，或手动加载 profile。
 
-如果还没有可用的 Release，可以从源码安装（需要 Go 1.24 或更高版本）：
+如果还没有可用的 Release，或需要安装当前修改后的代码，可以从源码安装（需要 Go 1.24 或更高版本）。在源码 checkout 内直接运行安装器时，默认构建当前源码；`--source` / `-Source` 是对应的显式写法：
 
 ```sh
 git clone https://github.com/tangyao927/jd.git
 cd jd
-./scripts/install.sh --source
+./scripts/install.sh
+# 等价：./scripts/install.sh --source
 ```
 
 ```powershell
 git clone https://github.com/tangyao927/jd.git
 Set-Location jd
-.\scripts\install.ps1 -Source
+.\scripts\install.ps1
+# 等价：.\scripts\install.ps1 -Source
 ```
 
 可选参数：
 
 ```sh
+./scripts/install.sh --version latest # 在源码目录内也强制安装最新 Release
 ./scripts/install.sh --version v0.1.0  # 安装指定版本
+./scripts/install.sh --source          # 显式构建当前源码
 ./scripts/install.sh --bind jdir       # 使用其他命令名
 ./scripts/install.sh --dry-run         # 只显示将要执行的操作
 ```
 
-PowerShell 对应参数为 `-Version`、`-Bind` 和 `-DryRun`。
+PowerShell 对应参数为 `-Version`、`-Source`、`-Bind` 和 `-DryRun`。
 
 ## 使用
 
@@ -165,7 +169,17 @@ JSON 响应包含 `schema_version`、查询词和排序后的候选列表。退�
 
 ## 更新与卸载
 
-重新运行安装命令即可更新，配置、书签和历史不会被覆盖。
+Release 用户重新运行网络安装命令即可更新到最新已发布版本。修改本地源码后，在源码目录重新运行安装器即可构建并替换已安装的二进制：
+
+```sh
+./scripts/install.sh
+```
+
+```powershell
+.\scripts\install.ps1
+```
+
+配置、书签和历史不会被覆盖。普通二进制逻辑更新后无需重新加载 shell；如果 shell 初始化或补全逻辑发生变化，则重新打开终端或加载 profile。
 
 从源码目录或下载后的脚本执行卸载：
 
